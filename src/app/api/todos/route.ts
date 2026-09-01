@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { all, one, run } from "@/lib/db";
+import { all, one, run, stamp } from "@/lib/db";
 import { processMentions } from "@/lib/mentions";
 import type { Todo } from "@/lib/types";
 
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return NextResponse.json({
-    todos: all<Todo>(
+    todos: await all<Todo>(
       "SELECT * FROM todos ORDER BY done, (due_date IS NULL), due_date, id DESC"
     ),
   });
@@ -18,15 +18,16 @@ export async function POST(req: Request) {
   const text = (b.text ?? "").trim();
   if (!text) return NextResponse.json({ error: "text required" }, { status: 400 });
 
-  const res = run(
-    "INSERT INTO todos (text, assignee_id, article_id, due_date, created_by) VALUES (?,?,?,?,?)",
+  const res = await run(
+    "INSERT INTO todos (text, assignee_id, article_id, due_date, created_by, created_at) VALUES (?,?,?,?,?,?) RETURNING id",
     text,
     b.assignee_id ?? null,
     b.article_id ?? null,
     b.due_date ?? null,
-    b.actorId ?? null
+    b.actorId ?? null,
+    stamp()
   );
-  const todo = one<Todo>("SELECT * FROM todos WHERE id = ?", Number(res.lastInsertRowid))!;
+  const todo = (await one<Todo>("SELECT * FROM todos WHERE id = ?", res.id))!;
 
   const tagged = await processMentions({
     text,

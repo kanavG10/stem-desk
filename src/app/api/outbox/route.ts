@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return NextResponse.json({
     mailIsLive: mailIsLive(),
-    messages: all<OutboxItem>("SELECT * FROM outbox ORDER BY id DESC LIMIT 60"),
+    messages: await all<OutboxItem>("SELECT * FROM outbox ORDER BY id DESC LIMIT 60"),
   });
 }

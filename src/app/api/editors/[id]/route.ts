@@ -13,13 +13,13 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ error: "that is not an email address" }, { status: 400 });
     }
-    run("UPDATE editors SET email = ? WHERE id = ?", email, Number(id));
+    await run("UPDATE editors SET email = ? WHERE id = ?", email, Number(id));
   }
   if (typeof b.name === "string" && b.name.trim()) {
-    run("UPDATE editors SET name = ? WHERE id = ?", b.name.trim(), Number(id));
+    await run("UPDATE editors SET name = ? WHERE id = ?", b.name.trim(), Number(id));
   }
 
-  const editor = one<Editor>("SELECT * FROM editors WHERE id = ?", Number(id));
+  const editor = await one<Editor>("SELECT * FROM editors WHERE id = ?", Number(id));
   if (!editor) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json({ editor });
 }

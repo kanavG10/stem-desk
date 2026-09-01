@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
-import { useApi } from "@/lib/api";
+import { api, useApi } from "@/lib/api";
 import type { Spread } from "@/lib/types";
 import { clsx } from "@/lib/clsx";
 import { PdfThumb } from "./PdfThumb";
@@ -24,6 +24,11 @@ export function SpreadsGrid() {
   const [error, setError] = useState<string | null>(null);
   const [meta, setMeta] = useState({ issue: "", page_label: "" });
 
+  /**
+   * Three steps, because print PDFs are far bigger than a serverless request body
+   * is allowed to be: ask for a URL, send the file straight to storage, then record
+   * the metadata. The file never passes through the app's own API.
+   */
   async function upload(files: FileList | File[]) {
     setError(null);
     for (const file of Array.from(files)) {
@@ -31,16 +36,42 @@ export function SpreadsGrid() {
         setError(`${file.name} is not a PDF`);
         continue;
       }
+      if (file.size > 100 * 1024 * 1024) {
+        setError(`${file.name} is over 100 MB`);
+        continue;
+      }
+
       setBusy(file.name);
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("title", file.name.replace(/\.pdf$/i, ""));
-      fd.append("issue", meta.issue);
-      fd.append("page_label", meta.page_label);
-      if (me) fd.append("actorId", String(me.id));
-      const res = await fetch("/api/spreads", { method: "POST", body: fd });
-      if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? "Upload failed");
-      setBusy(null);
+      try {
+        const { storedName, uploadUrl } = await api<{ storedName: string; uploadUrl: string }>(
+          "/api/spreads",
+          { method: "POST" }
+        );
+
+        const put = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/pdf" },
+          body: file,
+        });
+        if (!put.ok) throw new Error(`upload failed (${put.status})`);
+
+        await api("/api/spreads", {
+          method: "PUT",
+          body: JSON.stringify({
+            storedName,
+            filename: file.name,
+            title: file.name.replace(/\.pdf$/i, ""),
+            issue: meta.issue,
+            page_label: meta.page_label,
+            size_bytes: file.size,
+            actorId: me?.id,
+          }),
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Upload failed");
+      } finally {
+        setBusy(null);
+      }
     }
     reload();
   }

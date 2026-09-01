@@ -1,4 +1,4 @@
-import { one, run } from "./db";
+import { run, stamp } from "./db";
 
 export const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -34,22 +34,23 @@ type Mail = {
  */
 export async function sendMail(mail: Mail): Promise<{ id: number; status: string }> {
   const text = mail.text ?? stripTags(mail.html);
-  const res = run(
-    `INSERT INTO outbox (to_email, to_name, subject, html, text, kind, status)
-     VALUES (?,?,?,?,?,?,?)`,
+  const res = await run(
+    `INSERT INTO outbox (to_email, to_name, subject, html, text, kind, status, created_at)
+     VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
     mail.to,
     mail.toName ?? "",
     mail.subject,
     mail.html,
     text,
     mail.kind ?? "notification",
-    "queued"
+    "queued",
+    stamp()
   );
-  const id = Number(res.lastInsertRowid);
+  const id = res.id;
 
   const cfg = smtpConfig();
   if (!cfg) {
-    run("UPDATE outbox SET status = 'outbox' WHERE id = ?", id);
+    await run("UPDATE outbox SET status = 'outbox' WHERE id = ?", id);
     return { id, status: "outbox" };
   }
 
@@ -63,10 +64,10 @@ export async function sendMail(mail: Mail): Promise<{ id: number; status: string
       html: mail.html,
       text,
     });
-    run("UPDATE outbox SET status = 'sent', sent_at = datetime('now') WHERE id = ?", id);
+    await run("UPDATE outbox SET status = 'sent', sent_at = ? WHERE id = ?", stamp(), id);
     return { id, status: "sent" };
   } catch (err) {
-    run(
+    await run(
       "UPDATE outbox SET status = 'failed', error = ? WHERE id = ?",
       err instanceof Error ? err.message : String(err),
       id
@@ -105,13 +106,5 @@ export function emailShell(title: string, bodyHtml: string, footer = "") {
 export function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!
-  );
-}
-
-export function editorEmail(id: number | null): { name: string; email: string } | null {
-  if (!id) return null;
-  return (
-    (one<{ name: string; email: string }>("SELECT name, email FROM editors WHERE id = ?", id) ??
-      null)
   );
 }

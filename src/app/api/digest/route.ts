@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 /** Preview: returns the digest data plus the exact HTML that would be emailed. */
 export async function GET() {
-  const data = buildDigest();
+  const data = await buildDigest();
   return NextResponse.json({ data, html: renderDigestHtml(data) });
 }
 

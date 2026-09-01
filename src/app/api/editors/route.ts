@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   return NextResponse.json({
-    editors: all<Editor>("SELECT * FROM editors ORDER BY id"),
+    editors: await all<Editor>("SELECT * FROM editors ORDER BY id"),
     mailIsLive: mailIsLive(),
   });
 }

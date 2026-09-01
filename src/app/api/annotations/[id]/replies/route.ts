@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { one, run } from "@/lib/db";
+import { one, run, stamp } from "@/lib/db";
 import { processMentions } from "@/lib/mentions";
 import type { Annotation, Reply, Spread } from "@/lib/types";
 
@@ -11,21 +11,22 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = (b.body ?? "").trim();
   if (!body) return NextResponse.json({ error: "body required" }, { status: 400 });
 
-  const annotation = one<Annotation>("SELECT * FROM annotations WHERE id = ?", Number(id));
+  const annotation = await one<Annotation>("SELECT * FROM annotations WHERE id = ?", Number(id));
   if (!annotation) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const res = run(
-    "INSERT INTO annotation_replies (annotation_id, author_id, body) VALUES (?,?,?)",
+  const res = await run(
+    "INSERT INTO annotation_replies (annotation_id, author_id, body, created_at) VALUES (?,?,?,?) RETURNING id",
     annotation.id,
     b.actorId ?? null,
-    body
+    body,
+    stamp()
   );
-  const reply = one<Reply>(
+  const reply = (await one<Reply>(
     "SELECT * FROM annotation_replies WHERE id = ?",
-    Number(res.lastInsertRowid)
-  )!;
+    res.id
+  ))!;
 
-  const spread = one<Spread>("SELECT * FROM spreads WHERE id = ?", annotation.spread_id);
+  const spread = await one<Spread>("SELECT * FROM spreads WHERE id = ?", annotation.spread_id);
 
   // Tag anyone named in the reply, and always loop in the thread's author.
   const mentioned = await processMentions({
@@ -40,7 +41,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   if (annotation.author_id && annotation.author_id !== (b.actorId ?? null)) {
     const alreadyTagged = mentioned.some((e) => e.id === annotation.author_id);
     if (!alreadyTagged) {
-      const author = one<{ handle: string }>(
+      const author = await one<{ handle: string }>(
         "SELECT handle FROM editors WHERE id = ?",
         annotation.author_id
       );

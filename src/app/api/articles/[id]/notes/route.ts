@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { all, one, run } from "@/lib/db";
+import { all, one, run, stamp } from "@/lib/db";
 import { processMentions } from "@/lib/mentions";
 import type { Article, ArticleNote } from "@/lib/types";
 
@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const rows = all<ArticleNote>(
+  const rows = await all<ArticleNote>(
     "SELECT * FROM article_notes WHERE article_id = ? ORDER BY created_at, id",
     Number(id)
   );
@@ -24,20 +24,21 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   const body = (b.body ?? "").trim();
   if (!body) return NextResponse.json({ error: "body required" }, { status: 400 });
 
-  const article = one<Article>("SELECT * FROM articles WHERE id = ?", Number(id));
+  const article = await one<Article>("SELECT * FROM articles WHERE id = ?", Number(id));
   if (!article) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const res = run(
-    "INSERT INTO article_notes (article_id, parent_id, author_id, body) VALUES (?,?,?,?)",
+  const res = await run(
+    "INSERT INTO article_notes (article_id, parent_id, author_id, body, created_at) VALUES (?,?,?,?,?) RETURNING id",
     article.id,
     b.parent_id ?? null,
     b.actorId ?? null,
-    body
+    body,
+    stamp()
   );
-  const note = one<ArticleNote>(
+  const note = (await one<ArticleNote>(
     "SELECT * FROM article_notes WHERE id = ?",
-    Number(res.lastInsertRowid)
-  )!;
+    res.id
+  ))!;
 
   const label = article.title || "Untitled story";
   const url = `/articles?story=${article.id}`;
@@ -52,13 +53,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
   // A reply always reaches the person whose note it answers.
   if (b.parent_id) {
-    const parent = one<ArticleNote>(
+    const parent = await one<ArticleNote>(
       "SELECT * FROM article_notes WHERE id = ?",
       b.parent_id
     );
     const authorId = parent?.author_id ?? null;
     if (authorId && authorId !== (b.actorId ?? null) && !tagged.some((e) => e.id === authorId)) {
-      const author = one<{ handle: string }>("SELECT handle FROM editors WHERE id = ?", authorId);
+      const author = await one<{ handle: string }>("SELECT handle FROM editors WHERE id = ?", authorId);
       if (author) {
         await processMentions({
           text: `@${author.handle} ${body}`,

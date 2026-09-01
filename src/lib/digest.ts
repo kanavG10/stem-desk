@@ -1,4 +1,4 @@
-import { all } from "./db";
+import { all, todayStamp } from "./db";
 import { daysUntil, formatDate, relativeDue, today } from "./dates";
 import { APP_URL, emailShell, escapeHtml, sendMail } from "./mail";
 import { frontier, STAGES, type Article, type Editor, type Flag, type StageKey, type Todo } from "./types";
@@ -52,8 +52,8 @@ export type DigestData = {
   board: { key: StageKey; label: string; articles: Article[] }[];
 };
 
-export function buildDigest(): DigestData {
-  const articles = all<Article>(
+export async function buildDigest(): Promise<DigestData> {
+  const articles = await all<Article>(
     "SELECT * FROM articles WHERE archived = 0 AND spiked = 0 AND published = 0"
   );
   const scored: Scored[] = articles.map((article) => ({ article, flags: flagsFor(article) }));
@@ -77,15 +77,16 @@ export function buildDigest(): DigestData {
     cleared,
     reachOut,
     board,
-    openTodos: all<Todo>(
-      "SELECT * FROM todos WHERE done = 0 AND (due_date IS NULL OR due_date <= date('now','+2 day')) ORDER BY due_date IS NULL, due_date"
+    openTodos: await all<Todo>(
+      "SELECT * FROM todos WHERE done = 0 AND (due_date IS NULL OR due_date <= ?) ORDER BY due_date IS NULL, due_date",
+      todayStamp(2)
     ),
-    unresolvedNotes: all(
+    unresolvedNotes: await all(
       `SELECT a.id, a.spread_id, s.title, a.body
          FROM annotations a JOIN spreads s ON s.id = a.spread_id
         WHERE a.resolved = 0 ORDER BY a.created_at DESC LIMIT 8`
     ),
-    editors: all<Editor>("SELECT * FROM editors"),
+    editors: await all<Editor>("SELECT * FROM editors"),
   };
 }
 
@@ -177,7 +178,7 @@ export function renderDigestHtml(d: DigestData): string {
 }
 
 export async function sendDigest(recipients?: Editor[]) {
-  const data = buildDigest();
+  const data = await buildDigest();
   const html = renderDigestHtml(data);
   const to = recipients ?? data.editors;
   const results = [];

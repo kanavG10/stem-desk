@@ -1,56 +1,70 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
-import { all, one, run, UPLOAD_DIR } from "@/lib/db";
+import { all, one, run, stamp } from "@/lib/db";
+import { createUploadUrl, newStoredName } from "@/lib/storage";
 import type { Spread } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 60 * 1024 * 1024;
-
 export async function GET() {
   return NextResponse.json({
-    spreads: all<Spread>(
+    spreads: await all<Spread>(
       `SELECT s.*,
-              (SELECT COUNT(*) FROM annotations a WHERE a.spread_id = s.id AND a.resolved = 0) AS open_notes,
-              (SELECT COUNT(*) FROM annotations a WHERE a.spread_id = s.id) AS total_notes
+              (SELECT CAST(COUNT(*) AS INTEGER) FROM annotations a
+                WHERE a.spread_id = s.id AND a.resolved = 0) AS open_notes,
+              (SELECT CAST(COUNT(*) AS INTEGER) FROM annotations a
+                WHERE a.spread_id = s.id) AS total_notes
          FROM spreads s ORDER BY s.created_at DESC, s.id DESC`
     ),
   });
 }
 
-export async function POST(req: Request) {
-  const form = await req.formData();
-  const file = form.get("file");
-  if (!(file instanceof File)) {
-    return NextResponse.json({ error: "file required" }, { status: 400 });
+/**
+ * Step one of an upload: hand back a name and a URL to PUT the PDF to. The file
+ * itself never passes through this app, so a 25 MB spread is fine even on a host
+ * that caps request bodies at a few megabytes.
+ */
+export async function POST() {
+  const storedName = newStoredName();
+  try {
+    return NextResponse.json({ storedName, uploadUrl: await createUploadUrl(storedName) });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "could not start upload" },
+      { status: 500 }
+    );
   }
-  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
-    return NextResponse.json({ error: "only PDF spreads are accepted" }, { status: 415 });
-  }
-  if (file.size > MAX_BYTES) {
-    return NextResponse.json({ error: "PDF is larger than 60 MB" }, { status: 413 });
+}
+
+/** Step two: the PDF is in storage, record what it is. */
+export async function PUT(req: Request) {
+  const b = (await req.json()) as {
+    storedName?: string;
+    filename?: string;
+    title?: string;
+    issue?: string;
+    page_label?: string;
+    size_bytes?: number;
+    actorId?: number;
+  };
+  if (!b.storedName || !/^[0-9a-f-]{36}\.pdf$/i.test(b.storedName)) {
+    return NextResponse.json({ error: "storedName required" }, { status: 400 });
   }
 
-  await fs.mkdir(UPLOAD_DIR, { recursive: true });
-  const storedName = `${crypto.randomUUID()}.pdf`;
-  await fs.writeFile(path.join(UPLOAD_DIR, storedName), Buffer.from(await file.arrayBuffer()));
-
-  const res = run(
-    `INSERT INTO spreads (title, issue, page_label, filename, stored_name, size_bytes, uploaded_by)
-     VALUES (?,?,?,?,?,?,?)`,
-    String(form.get("title") || file.name.replace(/\.pdf$/i, "")),
-    String(form.get("issue") || ""),
-    String(form.get("page_label") || ""),
-    file.name,
-    storedName,
-    file.size,
-    Number(form.get("actorId")) || null
+  const res = await run(
+    `INSERT INTO spreads (title, issue, page_label, filename, stored_name, size_bytes, uploaded_by, created_at)
+     VALUES (?,?,?,?,?,?,?,?) RETURNING id`,
+    (b.title || b.filename?.replace(/\.pdf$/i, "") || "Untitled spread").slice(0, 200),
+    b.issue ?? "",
+    b.page_label ?? "",
+    b.filename ?? b.storedName,
+    b.storedName,
+    b.size_bytes ?? 0,
+    b.actorId ?? null,
+    stamp()
   );
 
   return NextResponse.json(
-    { spread: one<Spread>("SELECT * FROM spreads WHERE id = ?", Number(res.lastInsertRowid)) },
+    { spread: await one<Spread>("SELECT * FROM spreads WHERE id = ?", res.id) },
     { status: 201 }
   );
 }

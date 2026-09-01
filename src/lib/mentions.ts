@@ -1,4 +1,4 @@
-import { all, run } from "./db";
+import { all, run, stamp } from "./db";
 import { APP_URL, emailShell, escapeHtml, sendMail } from "./mail";
 import type { Editor } from "./types";
 
@@ -28,30 +28,31 @@ export async function processMentions(src: MentionSource): Promise<Editor[]> {
   if (handles.length === 0) return [];
 
   // Tagging yourself is allowed — it is the easiest way to check mail is arriving.
-  const editors = all<Editor>(
+  const editors = await all<Editor>(
     `SELECT * FROM editors WHERE lower(handle) IN (${handles.map(() => "?").join(",")})`,
     ...handles
   );
   if (editors.length === 0) return [];
 
   const actor = src.actorId
-    ? all<Editor>("SELECT * FROM editors WHERE id = ?", src.actorId)[0]
+    ? (await all<Editor>("SELECT * FROM editors WHERE id = ?", src.actorId))[0]
     : undefined;
   const actorName = actor?.name ?? "Someone";
   const selfTag = (e: Editor) => e.id === src.actorId;
   const url = `${APP_URL}${src.url}`;
 
   for (const e of editors) {
-    run(
-      `INSERT INTO mentions (editor_id, actor_id, context_type, context_id, context_label, excerpt, url)
-       VALUES (?,?,?,?,?,?,?)`,
+    await run(
+      `INSERT INTO mentions (editor_id, actor_id, context_type, context_id, context_label, excerpt, url, created_at)
+       VALUES (?,?,?,?,?,?,?,?)`,
       e.id,
       src.actorId,
       src.contextType,
       src.contextId,
       src.contextLabel,
       src.text.slice(0, 400),
-      src.url
+      src.url,
+      stamp()
     );
 
     await sendMail({

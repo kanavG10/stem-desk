@@ -149,25 +149,63 @@ something. Tokens are all at the top of `globals.css`.
 
 ## Deploying
 
-The app keeps everything on disk: `data/stemhub.db` and the PDFs in `data/uploads`.
-So it runs anywhere with a **persistent filesystem** — Railway, Render, Fly, a spare
-machine on the school network, or a laptop that stays on. Set the same environment
-variables as `.env.local`, and point cron at `scripts/digest.mjs`.
+The app runs two ways from the same code. Locally it needs nothing: SQLite in
+`data/stemhub.db`, PDFs in `data/uploads`. Set `DATABASE_URL` and the Supabase keys
+and it switches to Postgres and a storage bucket — which is what a serverless host
+needs, since those give you no persistent disk.
 
-**Vercel needs a change first.** Its functions get an ephemeral, mostly read-only
-filesystem, so the SQLite file and every uploaded spread would be wiped on each
-deploy and would not be shared between requests. It would look like it worked, then
-quietly lose the tracker. Two swaps make it work:
+### Free hosting on Vercel
 
-1. **Database** — move off `node:sqlite` to hosted Postgres (Vercel Postgres, Neon,
-   Supabase). Contained to `src/lib/db.ts`: routes only ever call `all`, `one` and
-   `run`, so the SQL stays and the connection changes.
-2. **Uploads** — store spreads in Vercel Blob or S3 instead of `data/uploads`, and
-   have `/api/pdf/[id]` redirect to the blob URL. Touches
-   `src/app/api/spreads/route.ts` and `src/app/api/pdf/[id]/route.ts`.
+**1. Database.** Make a project at [supabase.com](https://supabase.com) (free tier:
+500 MB) and copy the **pooled** connection string from Project Settings → Database.
+Neon or Vercel Postgres work identically — the app only wants a `DATABASE_URL`.
 
-Then set `DIGEST_SECRET` and add a Vercel Cron entry pointing at `POST /api/digest`
-with that header, replacing the local cron line above.
+**2. Storage.** In the same Supabase project, Storage → New bucket → name it
+`spreads`, and leave **Public** off. Copy the project URL and the `service_role` key
+from Project Settings → API.
+
+> Spreads are big — the real one in this repo is 25 MB, and Vercel caps request
+> bodies at 4.5 MB. So the browser uploads straight to the bucket: it asks
+> `POST /api/spreads` for a one-time URL, PUTs the file there, then `PUT /api/spreads`
+> records the metadata. The PDF never passes through a function. `/api/pdf/[id]`
+> redirects to a signed URL that expires in an hour.
+
+**3. Deploy.** Import the repo on Vercel and set these environment variables:
+
+```
+APP_URL, DATABASE_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, CRON_SECRET
+```
+
+The tables are created on the first request. `vercel.json` already registers the
+daily digest against `/api/cron/digest`; Vercel sends `CRON_SECRET` as a bearer token
+automatically. Hobby projects get one cron run a day, which is exactly what this
+needs. The schedule is in UTC — `15 14 * * *` is 7:15am Pacific.
+
+**4. Bring your data across.** Once the deployed app has loaded once (that creates
+the tables), from your laptop:
+
+```bash
+DATABASE_URL='...' SUPABASE_URL='...' SUPABASE_SERVICE_ROLE_KEY='...' npm run migrate
+```
+
+It copies every row and uploads the PDFs, and refuses to run if the remote database
+already has stories in it.
+
+### What the free tiers actually cost you
+
+- **1 GB of storage** is about 40 spreads at 25 MB. Delete old issues, or move the
+  bucket to a paid tier when you run out.
+- **Supabase pauses a free project after ~a week of no activity.** You resume it from
+  the dashboard in a click. If that gets annoying over the summer, swap
+  `DATABASE_URL` to Neon, which wakes on its own — no code change.
+- Vercel functions time out; the digest route asks for 60 seconds, which is far more
+  than it needs for two editors.
+
+### Anywhere with a disk
+
+Railway, Render, Fly, or a spare machine: skip Postgres and Supabase entirely, set
+`DATA_DIR` to a mounted volume, and point cron at `scripts/digest.mjs`. Same code.
 
 ---
 

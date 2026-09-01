@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { one, run } from "@/lib/db";
+import { one, run, stamp } from "@/lib/db";
 import { processMentions } from "@/lib/mentions";
 import type { Annotation, Spread } from "@/lib/types";
 
@@ -23,8 +23,8 @@ export async function POST(req: Request) {
 
   const x = clamp(b.x);
   const y = clamp(b.y);
-  const res = run(
-    "INSERT INTO annotations (spread_id, page, x, y, w, h, body, author_id) VALUES (?,?,?,?,?,?,?,?)",
+  const res = await run(
+    "INSERT INTO annotations (spread_id, page, x, y, w, h, body, author_id, created_at) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
     b.spread_id,
     b.page ?? 1,
     x,
@@ -32,14 +32,15 @@ export async function POST(req: Request) {
     clamp(b.w ?? 0, 1 - x),
     clamp(b.h ?? 0, 1 - y),
     body,
-    b.actorId ?? null
+    b.actorId ?? null,
+    stamp()
   );
-  const annotation = one<Annotation>(
+  const annotation = (await one<Annotation>(
     "SELECT * FROM annotations WHERE id = ?",
-    Number(res.lastInsertRowid)
-  )!;
+    res.id
+  ))!;
 
-  const spread = one<Spread>("SELECT * FROM spreads WHERE id = ?", b.spread_id);
+  const spread = await one<Spread>("SELECT * FROM spreads WHERE id = ?", b.spread_id);
   const tagged = await processMentions({
     text: body,
     actorId: b.actorId ?? null,
