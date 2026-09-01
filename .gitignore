@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# app data (sqlite db + uploaded spreads)
+/data
+.env.local
+
+# keep the template, ignore the real one
+!.env.example
