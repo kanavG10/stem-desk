@@ -8,6 +8,8 @@
  *     node scripts/migrate-to-postgres.mjs
  *
  * Safe to re-run: it refuses to touch a Postgres database that already has stories.
+ * Pass --replace to wipe the remote tables first — which is what you want on a fresh
+ * project, since the app seeds itself with example stories the first time it boots.
  */
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
@@ -41,9 +43,13 @@ async function copy(table, columns) {
   for (const row of data) {
     const values = columns.map((c) => row[c] ?? null);
     const placeholders = columns.map((_, i) => `$${i + 1}`).join(",");
+    // Ids must survive the move, since editor_id / article_id / spread_id point at
+    // them. The identity columns are GENERATED ALWAYS, so say so explicitly.
     await pool.query(
-      `INSERT INTO ${table} (${columns.join(",")}) VALUES (${placeholders})
-         ON CONFLICT (id) DO NOTHING`,
+      `INSERT INTO ${table} (${columns.join(",")})
+       OVERRIDING SYSTEM VALUE
+       VALUES (${placeholders})
+       ON CONFLICT (id) DO NOTHING`,
       values
     );
   }
@@ -88,13 +94,25 @@ async function uploadSpreads() {
   }
 }
 
+const TABLES = [
+  "annotation_replies", "annotations", "article_notes", "mentions",
+  "outbox", "todos", "spreads", "articles", "editors",
+];
+
+const replace = process.argv.includes("--replace");
 const existing = await pool.query("SELECT COUNT(*)::int AS n FROM articles");
-if (existing.rows[0].n > 0) {
+
+if (existing.rows[0].n > 0 && !replace) {
   console.error(
-    `Postgres already holds ${existing.rows[0].n} stories. Refusing to overwrite —\n` +
-      "clear it first if you really mean to re-import."
+    `Postgres already holds ${existing.rows[0].n} stories. Refusing to overwrite.\n` +
+      "Re-run with --replace if you meant to clear it and import from SQLite."
   );
   process.exit(1);
+}
+
+if (replace) {
+  console.log(`Clearing ${existing.rows[0].n} existing stories and everything attached…`);
+  await pool.query(`TRUNCATE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`);
 }
 
 console.log("Copying rows…");

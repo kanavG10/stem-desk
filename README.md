@@ -182,15 +182,17 @@ daily digest against `/api/cron/digest`; Vercel sends `CRON_SECRET` as a bearer 
 automatically. Hobby projects get one cron run a day, which is exactly what this
 needs. The schedule is in UTC — `15 14 * * *` is 7:15am Pacific.
 
-**4. Bring your data across.** Once the deployed app has loaded once (that creates
-the tables), from your laptop:
+**4. Bring your data across.** Load the app once so it creates the tables — that
+first boot also seeds it with example stories. Then, from your laptop:
 
 ```bash
-DATABASE_URL='...' SUPABASE_URL='...' SUPABASE_SERVICE_ROLE_KEY='...' npm run migrate
+node --env-file=.env.local scripts/migrate-to-postgres.mjs --replace
 ```
 
-It copies every row and uploads the PDFs, and refuses to run if the remote database
-already has stories in it.
+It clears those seeded stories, copies every row from `data/stemhub.db` keeping ids
+intact so the links between them survive, and uploads any PDFs still on disk. Without
+`--replace` it refuses to touch a database that already holds stories, so you cannot
+overwrite real data by accident.
 
 ### What the free tiers actually cost you
 
