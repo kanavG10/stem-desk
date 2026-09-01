@@ -1,6 +1,7 @@
 import { run, stamp } from "./db";
 
-export const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
+// Trailing slashes are easy to paste in and would double up every link in an email.
+export const APP_URL = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
 
 function smtpConfig() {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
