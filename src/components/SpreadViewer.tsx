@@ -54,6 +54,11 @@ function Viewer({ spreadId }: { spreadId: number }) {
 
   const annotations = useMemo(() => data?.annotations ?? [], [data]);
 
+  // A spread is tens of megabytes and now comes from a bucket, so the wait before
+  // the first paint is real. Page dimensions are the signal: they are set the moment
+  // the document is open and measured, just before the canvas is painted.
+  const ready = size.w > 0;
+
   useEffect(() => {
     let cancelled = false;
     openPdf(`/api/pdf/${spreadId}`)
@@ -71,9 +76,16 @@ function Viewer({ spreadId }: { spreadId: number }) {
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(([entry]) =>
-      setStage({ w: entry.contentRect.width, h: entry.contentRect.height })
-    );
+    // Only publish a genuinely new size: a fresh object on every observation would
+    // restart the page render, and a restarted render cancels the one in flight.
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      setStage((prev) =>
+        Math.abs(prev.w - width) < 1 && Math.abs(prev.h - height) < 1
+          ? prev
+          : { w: width, h: height }
+      );
+    });
     ro.observe(el);
     setStage({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
@@ -124,7 +136,7 @@ function Viewer({ spreadId }: { spreadId: number }) {
     return () => {
       cancelled = true;
     };
-  }, [doc, page, zoom, stage]);
+  }, [doc, page, zoom, stage.w, stage.h]);
 
   /* --- deep link from an email or the dashboard -------------------------- */
   const jumpedTo = useRef<number | null>(null);
@@ -190,11 +202,14 @@ function Viewer({ spreadId }: { spreadId: number }) {
       setDrag(next);
     }
 
-    function up() {
-      const d = dragRef.current;
+    function up(ev: MouseEvent) {
+      const start = dragRef.current;
       dragRef.current = null;
       setDrag(null);
-      if (!d) return;
+      if (!start) return;
+      // Take the corner from the release itself, not from the last move event.
+      const end = pointIn(ev.clientX, ev.clientY);
+      const d = { ...start, w: end.x - start.x, h: end.y - start.y };
       // Normalise, so dragging up or left still yields a positive box.
       const box: Box = {
         page: d.page,
@@ -284,12 +299,20 @@ function Viewer({ spreadId }: { spreadId: number }) {
       <div className="flex min-h-0 flex-1">
         <div ref={stageRef} className="min-w-0 flex-1 overflow-auto bg-sunk p-8">
           {loadError && <Empty>Could not open this PDF ({loadError}).</Empty>}
+          {!loadError && !ready && (
+            <div className="py-16 text-center">
+              <Note>Loading the spread…</Note>
+            </div>
+          )}
 
           <div
             ref={pageRef}
             onMouseDown={onMouseDown}
             style={{ width: size.w || undefined, height: size.h || undefined }}
-            className="relative mx-auto cursor-crosshair border border-rule shadow-[0_1px_16px_rgba(0,0,0,0.08)] select-none"
+            className={clsx(
+              "relative mx-auto cursor-crosshair border border-rule shadow-[0_1px_16px_rgba(0,0,0,0.08)] select-none",
+              !ready && "invisible"
+            )}
           >
             <canvas ref={canvasRef} className="block bg-white" />
 
@@ -324,9 +347,11 @@ function Viewer({ spreadId }: { spreadId: number }) {
             )}
           </div>
 
-          <p className="mx-auto mt-4 max-w-sm text-center">
-            <Note>Drag a box over the page to comment on it. Click for a point note.</Note>
-          </p>
+          {ready && (
+            <p className="mx-auto mt-4 max-w-sm text-center">
+              <Note>Drag a box over the page to comment on it. Click for a point note.</Note>
+            </p>
+          )}
         </div>
 
         <aside className="flex w-[330px] shrink-0 flex-col border-l border-rule bg-card">
